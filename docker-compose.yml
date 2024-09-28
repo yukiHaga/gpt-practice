@@ -1,0 +1,63 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    env_file: .env.development
+    healthcheck:
+      # ヘルスチェック方法
+      # railsが起動しているかを確認している
+      # 前者のコマンドが失敗した時だけ、後ろのコマンドが実行される
+      # exit 1はプログラムが異常終了したことを表すコマンド
+      test: "curl -f http://localhost:3000/robots.txt || exit 1"
+      # ヘルスチェックの間隔
+      interval: 5s
+      # リトライ回数
+      # コンテナを起動した直後は、コンテナはstarting状態になっている
+      # 指定した間隔でヘルスチェックを実行して、1回でもチェックに成功すれば、
+      # コンテナはhealthy状態になる。retriesの回数失敗すれば、コンテナはunhealthy状態になる
+      retries: 10
+    ports:
+      - 3000:3000
+    volumes:
+      # ホストとコンテナでデータの一貫性を担保するのは大事だが、
+      # データの一貫性をそこまで担保しなくて良い場面でも担保してしまい、パフォーマンスを落とすことがある
+      # そのため、delegated or cachedを使う
+      # delegatedは最も弱い保証を提供する。コンテナが実行した書き込みがホストファイルシステムに即座に反映されないことがある
+      # delegatedでは、コンテナのファイルシステム上の表示が信頼できるものとなる。
+      # cachedはdelegatedの性質とコンテナが実行した書き込みの可視性に関する保証を提供する
+      # cached としてマウントしたディレクトリは、ホスト側ファイルシステムが信頼できます。つまり、コンテナでの書き込み処理は即時ホスト側でも見えるようになりますが、
+      # ホスト上での書き込み処理がコンテナ内で見えるようになるには遅延が発生しうるでしょう。
+      - .:/var/app:cached
+      # tmpディレクトリには、キャッシュやpidなどの一時ファイルが置かれます。
+      - rails-tmp-data:/var/app/tmp:delegated
+      # デフォルトでは、/usr/local/bundleにgemがインストールされる
+      - bundle-data:/usr/local/bundle:delegated
+    depends_on:
+      mysql:
+        # 依存サービスのヘルスチェックがパスするまで待つ
+        # 「サービスが開始する」ことと「他のサービスからのアクセスを受け付けられる」ことは異なるということです。
+        # 例えば、MySQL や PostgreSQL などはプロセス開始直後からすぐにクエリを実行できるわけではありません。
+        # プロセス開始後に起動処理が実行されクエリを受け付けることができる状態になるまでに少なくとも数秒かかると思います。
+        # service_started はサービスが開始されるのを待つだけなので、「他のサービスからのアクセスを受け付けられる」状態になっているかどうかは保証しません。
+        # service_healthy は適切なヘルスチェックを行うことにより「他のサービスからのアクセスを受け付けられる」状態になるまでそれに依存しているサービスは起動を待ちます。
+        condition: service_healthy
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ""
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    healthcheck:
+      # -h localhostはMySQLサーバーがローカルホスト上にあることを指定している。
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      start_period: 5s
+    ports:
+      - 3306:3306
+    volumes:
+      - mysql-data:/var/lib/mysql:delegated
+
+volumes:
+  rails-tmp-data:
+  bundle-data:
+  mysql-data:
